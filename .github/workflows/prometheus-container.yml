@@ -69,12 +69,24 @@ jobs:
           ref: ${{ needs.plan.outputs.upstream_sha }}
           path: source
           persist-credentials: false
-      - name: Test overlay compatibility and policy behavior
+      - name: Test overlay compatibility
         run: |
           python3 -m unittest discover -s custom/prometheus/tests -p 'test_*.py' -v
           python3 custom/prometheus/pipeline.py prepare source
           test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
-          pwsh -NoProfile -File custom/prometheus/test-standard.ps1
+      - name: Test policy behavior
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Pester = Get-Module -ListAvailable Pester | Where-Object Version -GE '5.7.1' | Select-Object -First 1
+          if (-not $Pester) {
+              Install-Module Pester -RequiredVersion 5.7.1 -Repository PSGallery -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -MinimumVersion 5.7.1 -Force
+          $Result = Invoke-Pester -Path custom/prometheus/tests/Invoke-CIPPStandardPrometheusTeamsExternalChatFiles.Tests.ps1 -Output Detailed -PassThru
+          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 9) {
+              throw 'External Teams chat file-sharing standard tests failed.'
+          }
       - name: Compute build metadata
         id: metadata
         run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"

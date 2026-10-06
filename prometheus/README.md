@@ -1,57 +1,39 @@
-# Prometheus CIPP stable container
+# Prometheus CIPP overlay
 
-This fork uses released CyberDrain/CIPP source and a small overlay in this directory.
 Production image: `ghcr.io/prometheus-it/cipp-container:latest`.
 
-The daily GitHub Actions workflow selects the latest official stable release, resolves
-its exact commit, applies the custom standard without changing existing catalog entries,
-runs policy and compatibility tests, and builds the official release Dockerfile.
-It checks the compiled backend export, portal bundle and version metadata before publishing
-an immutable version image and moving `latest`. A failed check leaves the last published
-`latest` image intact. GitHub reports failed runs to the workflow subscribers.
+| File | Purpose |
+| --- | --- |
+| `Invoke-CIPPStandardPrometheusTeamsExternalChatFiles.ps1` | Custom Teams standard implementation. |
+| `standards.json` | Portal label, help text and required Enabled/Disabled choice. |
+| `pipeline.py` | Resolve a stable CIPP release, apply the overlay and verify the built image. |
+| `tests/` | Compatibility and policy behavior tests. |
+| `build-state.json` | Last successful build and scheduled workflow activity; maintained by CI. |
 
-Custom version suffixes change when the overlay or workflow changes, so CIPP's existing
-container updater detects both official releases and custom fixes. The updater follows
-the configured GHCR repository and restarts the Azure app at its existing update time.
-No Azure credential, CIPP SAM token, customer secret or tenant data is stored in this repository.
+## Updates
 
-`build-state.json` records the last successful upstream commit and custom version. A periodic
-activity commit prevents GitHub disabling the daily schedule after 60 days of inactivity.
-Only the Prometheus publisher should be enabled for this fork's production image. Keep
-the inherited workflow files for reference and CI, but disable the inherited container
-publishers in Actions so they cannot publish an image without the overlay.
+[The publisher](../.github/workflows/prometheus-container.yml) checks the latest official
+stable release daily at 04:17 UTC. It builds that release's exact commit with this overlay,
+runs both test suites and checks the packaged backend, portal and version metadata before
+publishing a versioned image and updating `latest`. Failed checks leave `latest` unchanged.
+CIPP's existing container updater follows the configured image repository.
 
-## Custom standard
+Overlay or workflow changes trigger a new build. `build-state.json` avoids unchanged
+rebuilds and periodically records activity to keep GitHub's schedule enabled. Keep the
+inherited container publishers disabled; preserve their files and the other CI workflows.
+Use Actions and `build-state.json` for build provenance. Do not reset this overlay with
+GitHub's **Sync fork** button.
 
-`PrometheusTeamsExternalChatFiles` appears under Teams Standards. It controls only
-`FileSharingInChatsWithExternalUsers` on the assigned tenant's Global Teams Files policy.
-Choose Enabled or Disabled explicitly. Report mode reads only. Remediation writes only
-that property when different, then reads it again before recording success.
-SharePoint and OneDrive restrictions still apply; client propagation can take several hours.
+## Standard and recovery
 
-Assign Enabled with Report and Remediate only to the customer delta template `SET-Delta-OST`.
-Do not add this exception to the shared baseline. Remove Remediate or select Disabled to
-stop/reverse enforcement as required.
+The standard controls only `FileSharingInChatsWithExternalUsers` on the assigned tenant's
+Global Teams Files policy. Report reads only; Remediate applies the explicit Enabled or
+Disabled choice and verifies the result. SharePoint and OneDrive restrictions still apply.
+Assign tenant exceptions through the appropriate customer delta template.
 
-## Initial deployment and recovery
+The pipeline currently supports this one custom standard. Adding another requires extending
+`pipeline.py` and its tests as well as adding the implementation and catalog entry.
 
-1. Enable the publisher workflow and run it. Make the GHCR package public: it contains
-   application code only. Azure and CIPP's current updater use anonymous image pulls.
-2. Verify the build succeeds and the exact version image can be pulled anonymously.
-3. Record Azure's current container configuration, then change only its image to
-   `ghcr.io/prometheus-it/cipp-container:latest`. Retain SSO, storage, Key Vault,
-   managed identity, app plan and updater settings.
-4. Verify CIPP sign-in, existing templates, backend and frontend version, and the new
-   standard. Run the standard in Report mode for Openstorage before remediation.
-5. Confirm the intended tenant policy readback after applying remediation.
-
-Rollback Azure to the previous recorded version image, or to the original
-`ghcr.io/cyberdrain/cipp:latest` if that is still the intended official version.
-Pin a previous custom version image to stop automatic channel updates during investigation.
-The Azure storage account retains saved templates across image changes; rolling back an
-image does not undo a Microsoft 365 policy write. To undo sharing, apply Disabled separately.
-
-If an upstream contract changes, the automated build stops for review. Fix this overlay and
-rerun the workflow; do not bypass tests or reset this fork with GitHub's Sync fork button.
-The build uses exact released source, so this fork's source snapshot may appear behind main
-while its container is current. Use Actions summaries and build-state.json for deployed provenance.
+To roll back application code, pin Azure to a previously published version image. Saved
+templates remain in Azure storage. Image rollback does not undo Microsoft 365 policy changes;
+select Disabled and remediate separately to reverse this sharing setting.

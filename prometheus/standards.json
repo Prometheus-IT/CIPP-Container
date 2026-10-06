@@ -1,0 +1,30 @@
+[
+  {
+    "name": "standards.PrometheusTeamsExternalChatFiles",
+    "cat": "Teams Standards",
+    "tag": [],
+    "label": "Allow file sharing in external Teams chats (Prometheus)",
+    "helpText": "Sets external chat file sharing in the Global Teams Files policy. Existing OneDrive and SharePoint sharing restrictions still apply. Client changes can take several hours to appear.",
+    "docsDescription": "Controls FileSharingInChatsWithExternalUsers in the Global Teams Files policy. Changes only this property for tenants assigned to this standard.",
+    "addedComponent": [
+      {
+        "type": "autoComplete",
+        "required": true,
+        "multiple": false,
+        "creatable": false,
+        "name": "standards.PrometheusTeamsExternalChatFiles.state",
+        "label": "External chat file sharing",
+        "options": [
+          { "label": "Enabled", "value": "Enabled" },
+          { "label": "Disabled", "value": "Disabled" }
+        ]
+      }
+    ],
+    "impact": "Medium Impact",
+    "impactColour": "warning",
+    "addedDate": "2026-10-06",
+    "powershellEquivalent": "Set-CsTeamsFilesPolicy -Identity Global -FileSharingInChatsWithExternalUsers Enabled",
+    "recommendedBy": ["Prometheus"],
+    "requiredCapabilities": ["MCOSTANDARD", "MCOEV", "MCOIMP", "TEAMS1", "Teams_Room_Standard"]
+  }
+]

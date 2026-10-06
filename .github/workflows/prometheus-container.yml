@@ -1,0 +1,175 @@
+name: Prometheus stable CIPP container
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild the latest official stable release
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 4 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'prometheus/**'
+      - '!prometheus/build-state.json'
+      - '.github/workflows/prometheus-container.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prometheus-stable-container
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'Prometheus-IT/CIPP-Container'
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.release.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
+      upstream_sha: ${{ steps.release.outputs.upstream_sha }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Select exact official stable release and overlay version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          args=()
+          if [[ "$FORCE" == true ]]; then args+=(--force); fi
+          python3 prometheus/pipeline.py resolve "${args[@]}"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      UPSTREAM_SHA: ${{ needs.plan.outputs.upstream_sha }}
+      IMAGE: ghcr.io/prometheus-it/cipp-container
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: custom
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: CyberDrain/CIPP
+          ref: ${{ needs.plan.outputs.upstream_sha }}
+          path: source
+          persist-credentials: false
+      - name: Test overlay compatibility and policy behavior
+        run: |
+          python3 -m unittest discover -s custom/prometheus/tests -p 'test_*.py' -v
+          python3 custom/prometheus/pipeline.py prepare source
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+          pwsh -NoProfile -File custom/prometheus/test-standard.ps1
+      - name: Compute build metadata
+        id: metadata
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build candidate locally without moving latest
+        uses: docker/build-push-action@v6
+        with:
+          context: source
+          file: source/build/Dockerfile.release
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}
+          cache-from: type=gha,scope=prometheus-stable
+          cache-to: type=gha,mode=max,scope=prometheus-stable
+          build-args: |
+            APP_VERSION=${{ env.VERSION }}
+            COMMIT_SHA=${{ env.UPSTREAM_SHA }}
+            IMAGE_TAG=latest
+            BUILD_DATE=${{ steps.metadata.outputs.date }}
+            DOTNET_REGISTRY=ghcr.io/cyberdrain
+          labels: |
+            org.opencontainers.image.source=https://github.com/Prometheus-IT/CIPP-Container
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.created=${{ steps.metadata.outputs.date }}
+            ch.prometheus.cipp.upstream-revision=${{ env.UPSTREAM_SHA }}
+      - name: Verify packaged backend, frontend and updater metadata
+        run: |
+          container=$(docker create "$IMAGE:$VERSION")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          mkdir packaged
+          docker cp "$container:/app/API/Modules/CIPPStandards" packaged/CIPPStandards
+          mkdir -p packaged/app/API/Modules
+          mv packaged/CIPPStandards packaged/app/API/Modules/
+          docker cp "$container:/app/API/Modules/CIPPCore" packaged/app/API/Modules/CIPPCore
+          docker cp "$container:/app/API/Modules/CIPPHTTP" packaged/app/API/Modules/CIPPHTTP
+          docker cp "$container:/app/Frontend" packaged/app/Frontend
+          python3 custom/prometheus/pipeline.py smoke packaged/app "$VERSION"
+          actual=$(docker image inspect "$IMAGE:$VERSION" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+          test "$actual" = "$VERSION"
+          docker image inspect "$IMAGE:$VERSION" --format '{{json .Config.Env}}' | grep -F "APP_VERSION=$VERSION"
+      - name: Publish tested immutable image, then promote latest
+        run: |
+          docker push "$IMAGE:$VERSION"
+          docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+          docker buildx imagetools inspect "$IMAGE:latest"
+          {
+            echo "### Tested stable image published"
+            echo "Image: \`$IMAGE:$VERSION\`"
+            echo "Upstream: \`${{ needs.plan.outputs.tag }}\` at \`$UPSTREAM_SHA\`"
+            echo "Azure's existing CIPP updater follows \`$IMAGE:latest\` after the initial registry switch."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  record:
+    needs: [plan, build]
+    if: always() && needs.plan.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Record successful build and keep the scheduled workflow active
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          UPSTREAM_SHA: ${{ needs.plan.outputs.upstream_sha }}
+          UPSTREAM_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os
+          from pathlib import Path
+          path = Path('prometheus/build-state.json')
+          state = json.loads(path.read_text()) if path.exists() else {}
+          today = datetime.datetime.now(datetime.timezone.utc).date()
+          previous = datetime.date.fromisoformat(state.get('activity_date', '1970-01-01'))
+          built = os.environ['BUILD_RESULT'] == 'success'
+          if built:
+              state.update(version=os.environ['VERSION'], upstream_sha=os.environ['UPSTREAM_SHA'], upstream_tag=os.environ['UPSTREAM_TAG'])
+          if built or (today - previous).days >= 25:
+              state['activity_date'] = today.isoformat()
+              path.write_text(json.dumps(state, indent=2) + '\n')
+          PY
+          if ! git diff --quiet -- prometheus/build-state.json || [[ -n "$(git ls-files --others --exclude-standard prometheus/build-state.json)" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add prometheus/build-state.json
+            git commit -m 'Record tested CIPP build and schedule activity [skip ci]'
+            git push origin HEAD:main
+          fi

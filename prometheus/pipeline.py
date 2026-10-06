@@ -44,13 +44,17 @@ def resolve(force=False):
     commit = api(f"/repos/CyberDrain/CIPP/commits/{tag}")["sha"]
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid upstream commit")
-    version = f"{tag.removeprefix('v')}-prometheus.{commit[:8]}.{overlay_hash()}"
+    base_version = f"{tag.removeprefix('v')}-prometheus.{commit[:8]}.{overlay_hash()}"
+    version = base_version
     if force and os.environ.get("GITHUB_RUN_ID"):
         version += f".build.{os.environ['GITHUB_RUN_ID']}"
     state_path = ROOT / "build-state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    # A forced rebuild is still the same released source and overlay. Do not
+    # republish the old base tag or restart production again on the next check.
+    recorded_base = re.sub(r"\.build\.\d+$", "", state.get("version", ""))
     return {"tag": tag, "upstream_sha": commit, "version": version,
-            "build": str(force or state.get("version") != version or
+            "build": str(force or recorded_base != base_version or
                          state.get("upstream_sha") != commit).lower()}
 
 

@@ -26,7 +26,7 @@ concurrency:
 jobs:
   plan:
     if: github.repository == 'Prometheus-IT/CIPP-Container'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.release.outputs.build }}
       tag: ${{ steps.release.outputs.tag }}
@@ -49,7 +49,7 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
@@ -138,7 +138,7 @@ jobs:
   record:
     needs: [plan, build]
     if: always() && needs.plan.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -73,6 +74,30 @@ class PipelineTests(unittest.TestCase):
         (directory / "CIPPStandards.psm1").write_text("function Existing {}")
         with self.assertRaisesRegex(ValueError, "not compiled"):
             pipeline.smoke(self.source, "test")
+
+    def resolve_recorded_build(self, recorded_sha="a" * 40, force=False):
+        (self.source / "build-state.json").write_text(json.dumps({
+            "version": "11.0.2-prometheus.aaaaaaaa.123456789abc.build.12345",
+            "upstream_sha": recorded_sha,
+        }))
+        with patch.object(pipeline, "ROOT", self.source), \
+                patch.object(pipeline, "overlay_hash", return_value="123456789abc"), \
+                patch.object(pipeline, "api", side_effect=[
+                    {"tag_name": "v11.0.2", "draft": False, "prerelease": False},
+                    {"sha": "a" * 40},
+                ]), patch.dict(os.environ, {"GITHUB_RUN_ID": "67890"}):
+            return pipeline.resolve(force)
+
+    def test_daily_check_preserves_successful_forced_build(self):
+        self.assertEqual(self.resolve_recorded_build()["build"], "false")
+
+    def test_changed_upstream_still_builds_after_forced_build(self):
+        self.assertEqual(self.resolve_recorded_build(recorded_sha="b" * 40)["build"], "true")
+
+    def test_requested_forced_rebuild_gets_distinct_version(self):
+        result = self.resolve_recorded_build(force=True)
+        self.assertEqual(result["build"], "true")
+        self.assertEqual(result["version"], "11.0.2-prometheus.aaaaaaaa.123456789abc.build.67890")
 
 
 if __name__ == "__main__":

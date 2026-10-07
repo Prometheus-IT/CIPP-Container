@@ -44,7 +44,9 @@ def resolve(force=False):
     commit = api(f"/repos/CyberDrain/CIPP/commits/{tag}")["sha"]
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid upstream commit")
-    base_version = f"{tag.removeprefix('v')}-prometheus.{commit[:8]}.{overlay_hash()}"
+    # The overlay is build metadata on an official stable release, not a
+    # prerelease. CIPP's SemVer comparison must consider it equal to that release.
+    base_version = f"{tag.removeprefix('v')}+prometheus.{commit[:8]}.{overlay_hash()}"
     version = base_version
     if force and os.environ.get("GITHUB_RUN_ID"):
         version += f".build.{os.environ['GITHUB_RUN_ID']}"
@@ -53,7 +55,10 @@ def resolve(force=False):
     # A forced rebuild is still the same released source and overlay. Do not
     # republish the old base tag or restart production again on the next check.
     recorded_base = re.sub(r"\.build\.\d+$", "", state.get("version", ""))
+    # OCI image tags cannot contain '+'. Keep a separate Docker-compatible tag;
+    # APP_VERSION and the OCI version label retain the complete SemVer metadata.
     return {"tag": tag, "upstream_sha": commit, "version": version,
+            "image_tag": version.replace("+", "-", 1),
             "build": str(force or recorded_base != base_version or
                          state.get("upstream_sha") != commit).lower()}
 

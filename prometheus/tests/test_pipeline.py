@@ -64,7 +64,9 @@ class PipelineTests(unittest.TestCase):
         ]):
             result = pipeline.resolve()
         self.assertEqual(result["upstream_sha"], "a" * 40)
-        self.assertRegex(result["version"], r"^11\.0\.2-prometheus\.aaaaaaaa\.[a-f0-9]{12}$")
+        self.assertRegex(result["version"], r"^11\.0\.2\+prometheus\.aaaaaaaa\.[a-f0-9]{12}$")
+        self.assertEqual(result["image_tag"], result["version"].replace("+", "-", 1))
+        self.assertRegex(result["image_tag"], r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$")
         self.assertEqual(result["build"], "true")
 
     def test_smoke_rejects_container_missing_compiled_standard(self):
@@ -75,9 +77,9 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not compiled"):
             pipeline.smoke(self.source, "test")
 
-    def resolve_recorded_build(self, recorded_sha="a" * 40, force=False):
+    def resolve_recorded_build(self, recorded_sha="a" * 40, force=False, recorded_version=None):
         (self.source / "build-state.json").write_text(json.dumps({
-            "version": "11.0.2-prometheus.aaaaaaaa.123456789abc.build.12345",
+            "version": recorded_version or "11.0.2+prometheus.aaaaaaaa.123456789abc.build.12345",
             "upstream_sha": recorded_sha,
         }))
         with patch.object(pipeline, "ROOT", self.source), \
@@ -97,7 +99,13 @@ class PipelineTests(unittest.TestCase):
     def test_requested_forced_rebuild_gets_distinct_version(self):
         result = self.resolve_recorded_build(force=True)
         self.assertEqual(result["build"], "true")
-        self.assertEqual(result["version"], "11.0.2-prometheus.aaaaaaaa.123456789abc.build.67890")
+        self.assertEqual(result["version"], "11.0.2+prometheus.aaaaaaaa.123456789abc.build.67890")
+        self.assertEqual(result["image_tag"], "11.0.2-prometheus.aaaaaaaa.123456789abc.build.67890")
+
+    def test_existing_prerelease_version_is_rebuilt_with_correct_metadata(self):
+        result = self.resolve_recorded_build(recorded_version="11.0.2-prometheus.aaaaaaaa.123456789abc")
+        self.assertEqual(result["build"], "true")
+        self.assertEqual(result["version"], "11.0.2+prometheus.aaaaaaaa.123456789abc")
 
 
 if __name__ == "__main__":

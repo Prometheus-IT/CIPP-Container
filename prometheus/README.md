@@ -18,6 +18,12 @@ runs both test suites and checks the packaged backend, portal and version metada
 publishing a versioned image and updating `latest`. Failed checks leave `latest` unchanged.
 CIPP's existing container updater follows the configured image repository.
 
+Application versions use SemVer build metadata, for example `11.0.2+prometheus.<commit>.<hash>`.
+CIPP considers that the same stable release as `11.0.2` while still warning about newer
+official releases. Docker tags use `-prometheus` instead because image tags cannot contain
+`+`; `build-state.json` records both. The updater compares complete version strings so it
+also detects new custom builds of the same official release.
+
 Overlay or workflow changes trigger a new build. `build-state.json` avoids unchanged
 rebuilds and periodically records activity to keep GitHub's schedule enabled. Keep the
 inherited container publishers disabled; preserve their files and the other CI workflows.

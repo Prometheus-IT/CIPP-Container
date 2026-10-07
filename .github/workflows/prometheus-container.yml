@@ -32,6 +32,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       upstream_sha: ${{ steps.release.outputs.upstream_sha }}
       version: ${{ steps.release.outputs.version }}
+      image_tag: ${{ steps.release.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +57,7 @@ jobs:
       packages: write
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      VERSION_TAG: ${{ needs.plan.outputs.image_tag }}
       UPSTREAM_SHA: ${{ needs.plan.outputs.upstream_sha }}
       IMAGE: ghcr.io/prometheus-it/cipp-container
     steps:
@@ -74,8 +76,10 @@ jobs:
           python3 -m unittest discover -s custom/prometheus/tests -p 'test_*.py' -v
           python3 custom/prometheus/pipeline.py prepare source
           test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
-      - name: Test policy behavior
+      - name: Test policy and version behavior
         shell: pwsh
+        env:
+          PROMETHEUS_CIPP_SOURCE: ${{ github.workspace }}/source
         run: |
           $ErrorActionPreference = 'Stop'
           $Pester = Get-Module -ListAvailable Pester | Where-Object Version -GE '5.7.1' | Select-Object -First 1
@@ -83,9 +87,9 @@ jobs:
               Install-Module Pester -RequiredVersion 5.7.1 -Repository PSGallery -Scope CurrentUser -Force -SkipPublisherCheck
           }
           Import-Module Pester -MinimumVersion 5.7.1 -Force
-          $Result = Invoke-Pester -Path custom/prometheus/tests/Invoke-CIPPStandardPrometheusTeamsExternalChatFiles.Tests.ps1 -Output Detailed -PassThru
-          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 9) {
-              throw 'External Teams chat file-sharing standard tests failed.'
+          $Result = Invoke-Pester -Path custom/prometheus/tests -Output Detailed -PassThru
+          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 18) {
+              throw 'Prometheus policy or version comparison tests failed.'
           }
       - name: Compute build metadata
         id: metadata
@@ -104,7 +108,7 @@ jobs:
           load: true
           push: false
           platforms: linux/amd64
-          tags: ${{ env.IMAGE }}:${{ env.VERSION }}
+          tags: ${{ env.IMAGE }}:${{ env.VERSION_TAG }}
           cache-from: type=gha,scope=prometheus-stable
           cache-to: type=gha,mode=max,scope=prometheus-stable
           build-args: |
@@ -121,7 +125,7 @@ jobs:
             ch.prometheus.cipp.upstream-revision=${{ env.UPSTREAM_SHA }}
       - name: Verify packaged backend, frontend and updater metadata
         run: |
-          container=$(docker create "$IMAGE:$VERSION")
+          container=$(docker create "$IMAGE:$VERSION_TAG")
           trap 'docker rm "$container" >/dev/null' EXIT
           mkdir packaged
           docker cp "$container:/app/API/Modules/CIPPStandards" packaged/CIPPStandards
@@ -131,18 +135,19 @@ jobs:
           docker cp "$container:/app/API/Modules/CIPPHTTP" packaged/app/API/Modules/CIPPHTTP
           docker cp "$container:/app/Frontend" packaged/app/Frontend
           python3 custom/prometheus/pipeline.py smoke packaged/app "$VERSION"
-          actual=$(docker image inspect "$IMAGE:$VERSION" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+          actual=$(docker image inspect "$IMAGE:$VERSION_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
           test "$actual" = "$VERSION"
-          docker image inspect "$IMAGE:$VERSION" --format '{{json .Config.Env}}' | grep -F "APP_VERSION=$VERSION"
+          docker image inspect "$IMAGE:$VERSION_TAG" --format '{{json .Config.Env}}' | grep -F "APP_VERSION=$VERSION"
       - name: Publish tested immutable image, then promote latest
         run: |
-          docker push "$IMAGE:$VERSION"
-          docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:$VERSION_TAG"
+          docker tag "$IMAGE:$VERSION_TAG" "$IMAGE:latest"
           docker push "$IMAGE:latest"
           docker buildx imagetools inspect "$IMAGE:latest"
           {
             echo "### Tested stable image published"
-            echo "Image: \`$IMAGE:$VERSION\`"
+            echo "Image: \`$IMAGE:$VERSION_TAG\`"
+            echo "Application version: \`$VERSION\`"
             echo "Upstream: \`${{ needs.plan.outputs.tag }}\` at \`$UPSTREAM_SHA\`"
             echo "Azure's existing CIPP updater follows \`$IMAGE:latest\` after the initial registry switch."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -161,6 +166,7 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           VERSION: ${{ needs.plan.outputs.version }}
+          VERSION_TAG: ${{ needs.plan.outputs.image_tag }}
           UPSTREAM_SHA: ${{ needs.plan.outputs.upstream_sha }}
           UPSTREAM_TAG: ${{ needs.plan.outputs.tag }}
         run: |
@@ -173,7 +179,7 @@ jobs:
           previous = datetime.date.fromisoformat(state.get('activity_date', '1970-01-01'))
           built = os.environ['BUILD_RESULT'] == 'success'
           if built:
-              state.update(version=os.environ['VERSION'], upstream_sha=os.environ['UPSTREAM_SHA'], upstream_tag=os.environ['UPSTREAM_TAG'])
+              state.update(version=os.environ['VERSION'], image_tag=os.environ['VERSION_TAG'], upstream_sha=os.environ['UPSTREAM_SHA'], upstream_tag=os.environ['UPSTREAM_TAG'])
           if built or (today - previous).days >= 25:
               state['activity_date'] = today.isoformat()
               path.write_text(json.dumps(state, indent=2) + '\n')

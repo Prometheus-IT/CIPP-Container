@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   plan:
-    if: github.repository == 'Prometheus-IT/CIPP-Container'
+    if: github.repository_id == '1407231640'
     runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.release.outputs.build }}
@@ -118,7 +118,7 @@ jobs:
             BUILD_DATE=${{ steps.metadata.outputs.date }}
             DOTNET_REGISTRY=ghcr.io/cyberdrain
           labels: |
-            org.opencontainers.image.source=https://github.com/Prometheus-IT/CIPP-Container
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.created=${{ steps.metadata.outputs.date }}

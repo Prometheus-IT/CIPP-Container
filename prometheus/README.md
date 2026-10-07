@@ -1,6 +1,6 @@
 # Prometheus CIPP overlay
 
-Production image: `ghcr.io/prometheus-it/cipp-container:latest`.
+Production image: `ghcr.io/prometheus-it/cipp-container:latest`. The image keeps this name after the repository rename to `CIPP-Prometheus`, so Azure continues following the same update source.
 
 | File | Purpose |
 | --- | --- |

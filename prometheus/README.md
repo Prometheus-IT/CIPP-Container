@@ -5,7 +5,7 @@ Production image: `ghcr.io/prometheus-it/cipp-container:latest`. The image keeps
 | File | Purpose |
 | --- | --- |
 | `Invoke-CIPPStandardPrometheusTeamsExternalChatFiles.ps1` | Custom Teams standard implementation. |
-| `standards.json` | Portal label, help text and required Enabled/Disabled choice. |
+| `standards.json` | Portal label, help text and required Enabled/Disabled choice; added to both the frontend and backend standards catalogs. |
 | `pipeline.py` | Resolve a stable CIPP release, apply the overlay and verify the built image. |
 | `tests/` | Compatibility and policy behavior tests. |
 | `build-state.json` | Last successful build and scheduled workflow activity; maintained by CI. |

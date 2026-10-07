@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent
 STANDARD = "PrometheusTeamsExternalChatFiles"
 FUNCTION = f"Invoke-CIPPStandard{STANDARD}"
 SOURCE_FILE = f"{FUNCTION}.ps1"
+CATALOGS = ("frontend/src/data/standards.json", "backend/Config/standards.json")
 
 
 def api(path):
@@ -65,19 +66,17 @@ def resolve(force=False):
 
 def prepare(source):
     source = Path(source).resolve()
-    catalog_path = source / "frontend/src/data/standards.json"
-    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     additions = json.loads((ROOT / "standards.json").read_text(encoding="utf-8"))
-    if not isinstance(catalog, list) or len(additions) != 1:
+    if len(additions) != 1:
         raise ValueError("Unexpected standards catalog format")
     item = additions[0]
     if item["name"] != f"standards.{STANDARD}" or not item["addedComponent"][0]["required"]:
         raise ValueError("Invalid custom standard metadata")
     if [o["value"] for o in item["addedComponent"][0]["options"]] != ["Enabled", "Disabled"]:
         raise ValueError("The standard must require an explicit Enabled/Disabled choice")
-    names = [i["name"] for i in catalog]
-    if len(names) != len(set(names)) or item["name"] in names:
-        raise ValueError("Duplicate standard identifier; stop rather than overwrite")
+    # The portal reads the frontend catalog; the executive report, template repair and
+    # tests read the backend copy. Validate both catalogs before touching any source file.
+    catalogs = [merged_catalog(source / path, additions) for path in CATALOGS]
     destination = source / f"backend/Modules/CIPPStandards/Public/Standards/{SOURCE_FILE}"
     if destination.exists():
         raise ValueError("Upstream already contains the custom function; review before updating")
@@ -90,15 +89,24 @@ def prepare(source):
         raise ValueError("Standards comparison contract changed")
     if not (source / "build/Dockerfile.release").is_file():
         raise ValueError("Official release Dockerfile is missing")
-    # Validate the complete catalog before touching either source file.
-    result = catalog + additions
-    encoded = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
-    if json.loads(encoded)[:-1] != catalog:
-        raise ValueError("Existing upstream standards were modified")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / SOURCE_FILE, destination)
-    catalog_path.write_text(encoded, encoding="utf-8")
-    return len(catalog)
+    for path, (_, encoded) in zip(CATALOGS, catalogs):
+        (source / path).write_text(encoded, encoding="utf-8")
+    return len(catalogs[0][0])
+
+
+def merged_catalog(path, additions):
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(catalog, list):
+        raise ValueError(f"Unexpected standards catalog format: {path}")
+    names = [i["name"] for i in catalog]
+    if len(names) != len(set(names)) or additions[0]["name"] in names:
+        raise ValueError("Duplicate standard identifier; stop rather than overwrite")
+    encoded = json.dumps(catalog + additions, indent=2, ensure_ascii=False) + "\n"
+    if json.loads(encoded)[:-1] != catalog:
+        raise ValueError("Existing upstream standards were modified")
+    return catalog, encoded
 
 
 def smoke(app, version):
@@ -120,6 +128,9 @@ def smoke(app, version):
     javascript = list((app / "Frontend/_next").rglob("*.js"))
     if not any(f"standards.{STANDARD}" in p.read_text(encoding="utf-8") for p in javascript):
         raise ValueError("Custom standard is missing from the built portal catalog")
+    backend_catalog = json.loads((app / "API/Config/standards.json").read_text(encoding="utf-8"))
+    if not any(i.get("name") == f"standards.{STANDARD}" for i in backend_catalog):
+        raise ValueError("Custom standard is missing from the backend standards catalog")
     for path in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP", "Frontend/index.html"):
         if not (app / path).exists():
             raise ValueError(f"Required runtime artifact missing: {path}")
@@ -146,4 +157,4 @@ if __name__ == "__main__":
         print(f"Preserved {prepare(args.source)} upstream standards; added {STANDARD}")
     else:
         smoke(args.app, args.version)
-        print("Built backend export, portal catalog, runtime files and updater version verified")
+        print("Built backend export, portal and backend catalogs, runtime files and updater version verified")

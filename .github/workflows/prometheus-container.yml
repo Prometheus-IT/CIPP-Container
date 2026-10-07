@@ -133,6 +133,7 @@ jobs:
           mv packaged/CIPPStandards packaged/app/API/Modules/
           docker cp "$container:/app/API/Modules/CIPPCore" packaged/app/API/Modules/CIPPCore
           docker cp "$container:/app/API/Modules/CIPPHTTP" packaged/app/API/Modules/CIPPHTTP
+          docker cp "$container:/app/API/Config" packaged/app/API/Config
           docker cp "$container:/app/Frontend" packaged/app/Frontend
           python3 custom/prometheus/pipeline.py smoke packaged/app "$VERSION"
           actual=$(docker image inspect "$IMAGE:$VERSION_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')

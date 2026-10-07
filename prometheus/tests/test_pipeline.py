@@ -19,6 +19,7 @@ class PipelineTests(unittest.TestCase):
         self.source = Path(self.temp.name)
         files = {
             "frontend/src/data/standards.json": json.dumps([{"name": "standards.Existing", "keep": {"x": [1, 2]}}]),
+            "backend/Config/standards.json": json.dumps([{"name": "standards.Existing", "keep": {"x": [1, 2]}}]),
             "backend/Modules/CIPPCore/Public/GraphHelper/New-TeamsRequestV2.ps1":
                 "$TenantFilter $Type $Action $Identity $Parameters",
             "backend/Modules/CIPPCore/Public/Set-CIPPStandardsCompareField.ps1": "$TenantFilter",
@@ -37,13 +38,31 @@ class PipelineTests(unittest.TestCase):
         function = self.source / f"backend/Modules/CIPPStandards/Public/Standards/{pipeline.SOURCE_FILE}"
         self.assertEqual(function.read_bytes(), (OVERLAY / pipeline.SOURCE_FILE).read_bytes())
 
+    def test_adds_standard_to_backend_catalog(self):
+        backend = self.source / "backend/Config/standards.json"
+        original = json.loads(backend.read_text())
+        pipeline.prepare(self.source)
+        combined = json.loads(backend.read_text())
+        self.assertEqual(combined[:-1], original)
+        self.assertEqual(combined[-1]["name"], f"standards.{pipeline.STANDARD}")
+
     def test_repeat_application_stops_without_overwriting(self):
         pipeline.prepare(self.source)
-        catalog = self.source / "frontend/src/data/standards.json"
-        before = catalog.read_bytes()
+        catalogs = [self.source / path for path in pipeline.CATALOGS]
+        before = [catalog.read_bytes() for catalog in catalogs]
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             pipeline.prepare(self.source)
-        self.assertEqual(catalog.read_bytes(), before)
+        self.assertEqual([catalog.read_bytes() for catalog in catalogs], before)
+
+    def test_backend_duplicate_stops_before_source_mutation(self):
+        backend = self.source / "backend/Config/standards.json"
+        backend.write_text(json.dumps([{"name": f"standards.{pipeline.STANDARD}"}]))
+        frontend = self.source / "frontend/src/data/standards.json"
+        before = frontend.read_bytes()
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            pipeline.prepare(self.source)
+        self.assertEqual(frontend.read_bytes(), before)
+        self.assertFalse((self.source / f"backend/Modules/CIPPStandards/Public/Standards/{pipeline.SOURCE_FILE}").exists())
 
     def test_changed_helper_stops_before_source_mutation(self):
         helper = self.source / "backend/Modules/CIPPCore/Public/GraphHelper/New-TeamsRequestV2.ps1"
@@ -76,6 +95,34 @@ class PipelineTests(unittest.TestCase):
         (directory / "CIPPStandards.psm1").write_text("function Existing {}")
         with self.assertRaisesRegex(ValueError, "not compiled"):
             pipeline.smoke(self.source, "test")
+
+    def write_packaged_app(self, backend_catalog):
+        app = self.source / "app"
+        files = {
+            "API/Modules/CIPPStandards/CIPPStandards.psd1": "@{ FunctionsToExport = '*' }",
+            "API/Modules/CIPPStandards/CIPPStandards.psm1":
+                f"function {pipeline.FUNCTION} {{ 'FileSharingInChatsWithExternalUsers' }}",
+            "API/Config/standards.json": json.dumps(backend_catalog),
+            "Frontend/version.json": json.dumps({"version": "test", "tag": "latest"}),
+            "Frontend/_next/static/app.js": f"standards.{pipeline.STANDARD}",
+            "Frontend/index.html": "",
+        }
+        for name, text in files.items():
+            target = app / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
+        for name in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP"):
+            (app / name).mkdir(parents=True)
+        return app
+
+    def test_smoke_accepts_complete_container(self):
+        app = self.write_packaged_app([{"name": f"standards.{pipeline.STANDARD}"}])
+        pipeline.smoke(app, "test")
+
+    def test_smoke_rejects_container_missing_backend_catalog_entry(self):
+        app = self.write_packaged_app([{"name": "standards.Existing"}])
+        with self.assertRaisesRegex(ValueError, "backend standards catalog"):
+            pipeline.smoke(app, "test")
 
     def resolve_recorded_build(self, recorded_sha="a" * 40, force=False, recorded_version=None):
         (self.source / "build-state.json").write_text(json.dumps({

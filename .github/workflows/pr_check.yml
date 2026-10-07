@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   check-branch:
+    # Upstream contribution rules must not close PRs inside a self-hosting fork.
+    if: github.repository == 'CyberDrain/CIPP'
     runs-on: ubuntu-slim
     steps:
       - name: Check and Comment on PR

@@ -1,7 +1,7 @@
 {
-  "version": "11.0.2+prometheus.220099ea.9936f492d5d0",
+  "version": "11.0.2+prometheus.220099ea.739445994b5b",
   "upstream_sha": "220099eaddded08dc40149fda7ac09fb6cc53cb9",
   "upstream_tag": "v11.0.2",
   "activity_date": "2026-10-07",
-  "image_tag": "11.0.2-prometheus.220099ea.9936f492d5d0"
+  "image_tag": "11.0.2-prometheus.220099ea.739445994b5b"
 }
